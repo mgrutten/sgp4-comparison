@@ -4,8 +4,12 @@ The way that include files and libraries are used in the example code seem very 
 Note that I'm using linux (actually Ubuntu under Windows Subsystem for Linux).
 
 Steps are:
-* Download the propagator library (in the file `Sgp4Prop_small_v8.0.zip`) and extract into the folder `Sgp4Prop_small`.
+* Download the propagator library from [space-track](https://www.space-track.org/) (in the file `Sgp4Prop_small_v8.0.zip`) and extract into the folder `Sgp4Prop_small`.
 * Run `bash gen-include.sh` (which in turn calls `afspc-fix.py` a few times).  This creates an `include` folder and populates it with sane include files for the AFSPC libraries.
+* Copy the license file `Sgp4Prop_small/Lib/Linux64/SGP4_Open_License.txt` to the current directory, for example
+```
+$ cp Sgp4Prop_small/Lib/Linux64/SGP4_Open_License.txt .
+```
 * Compile code using
 ```
 $ make

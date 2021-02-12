@@ -3,7 +3,7 @@ INCLUDEDIR=include
 LIBDIR=Sgp4Prop_small/Lib/Linux64
 
 CFLAGS=-O -Wall -I${INCLUDEDIR}
-LIBFLAGS=-Wl,-rpath=${LIBDIR} -L${LIBDIR} -ldllmain -ltimefunc -lenvconst -lastrofunc -lm
+LIBFLAGS=-Wl,-rpath=${LIBDIR} -L${LIBDIR} -ldllmain -ltimefunc -lenvconst -lastrofunc -ltle -lsgp4prop -lm
 
 
 test-sgp4: test-sgp4.c
