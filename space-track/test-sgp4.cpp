@@ -2,7 +2,10 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+//#include <nlohmann/json.hpp>
 #include <stdexcept>
+
+#include "json.hpp"
 
 // Library headers
 extern "C" {
@@ -13,6 +16,8 @@ extern "C" {
 #include "TimeFunc.h"
 #include "Tle.h"
 }
+
+namespace json = nlohmann;
 
 // Length of messages from AFSPC libraries
 static const u_int16_t LOGMSGLEN = 128;
@@ -106,6 +111,20 @@ void PropagateAndWrite(std::ostream& file, const int numSteps,
     if (TleRemoveSat(satkey) != 0) ShowErrMsg();
 }
 
+// a simple struct to model a person
+struct catalogueEntry {
+    std::string object_name;
+    uint32_t norad_cat_id;
+};
+
+void from_json(const json::json& j, catalogueEntry& e) {
+    std::string tmpString;
+
+    j.at("OBJECT_NAME").get_to(e.object_name);
+    j.at("NORAD_CAT_ID").get_to(tmpString);
+    e.norad_cat_id = std::stoi(tmpString);
+}
+
 int main() {
     // Initialise AFSPC libraries
     InitialiseLibs();
@@ -113,9 +132,22 @@ int main() {
     // Set numerical precision of display
     std::cout.precision(std::numeric_limits<double>::max_digits10 - 2);
 
+    // Import data from json file
+    std::ifstream catalogueFile("catalogue.json");
+    json::json catalogue;
+    catalogueFile >> catalogue;
+
+    std::vector<catalogueEntry> testData =
+        catalogue.get<std::vector<catalogueEntry>>();
+
+    for (const catalogueEntry entry : testData) {
+        std::cout << entry.object_name << " " << entry.norad_cat_id
+                  << std::endl;
+    }
+
     // Open file for writing
-    std::ofstream file("test.dat", std::ios::binary);
-    if (file.good()) {
+    std::ofstream outputFile("test.dat", std::ios::binary);
+    if (outputFile.good()) {
         // TLE lines
         std::string line1 =
             "1 25544U 98067A   21043.27289556  .00003336  00000-0  68749-4 0  "
@@ -124,7 +156,7 @@ int main() {
             "2 25544  51.6440 240.5646 0002850   6.0842 149.2030 "
             "15.48970429269234";
 
-        PropagateAndWrite(file, 101, 25544, 90.0 * 60.0, line1, line2);
+        PropagateAndWrite(outputFile, 101, 25544, 90.0 * 60.0, line1, line2);
     } else {
         throw std::runtime_error("Cannot open file for writing.");
     }

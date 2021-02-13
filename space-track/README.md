@@ -18,3 +18,7 @@ $ make
 ```
 $ LD_LIBRARY_PATH=Sgp4Prop_small/Lib/Linux64 ./test-sgp4
 ```
+
+## Dependencies
+I have am relying on the [C++ JSON parser](https://github.com/nlohmann/json), which I have downloaded explicitly.  There is an Ubuntu package, but it isn't compatible with the compiler I'm using.
+
