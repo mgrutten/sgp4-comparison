@@ -1,6 +1,11 @@
 package com.github.sgp4_comparison;
 
-
+import com.squareup.moshi.JsonAdapter;
+import com.squareup.moshi.Moshi;
+import com.squareup.moshi.Types;
+import okio.BufferedSource;
+import okio.Okio;
+import okio.Source;
 import org.orekit.data.DataContext;
 import org.orekit.data.DataProvidersManager;
 import org.orekit.data.DirectoryCrawler;
@@ -8,9 +13,11 @@ import org.orekit.propagation.SpacecraftState;
 import org.orekit.propagation.analytical.tle.TLE;
 import org.orekit.propagation.analytical.tle.TLEPropagator;
 import org.orekit.time.AbsoluteDate;
+import org.orekit.time.TimeScalesFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 
 
 public class SGP4Test {
@@ -45,18 +52,65 @@ public class SGP4Test {
      */
     public static void main(String[] args) throws IOException {
 
+        // Parse the input file
+        String catalogueFileName = args[0];
+        File catalogueFile = new File(catalogueFileName);
+
+        Moshi moshi = new Moshi.Builder().build();
+        JsonAdapter<List<GPRecord>> jsonAdapter = moshi.adapter(Types.newParameterizedType(List.class, GPRecord.class));
+
+        List<GPRecord> gpRecords;
+        try (Source fileSource = Okio.source(catalogueFile);
+             BufferedSource bufferedSource = Okio.buffer(fileSource)) {
+
+            gpRecords = jsonAdapter.fromJson(bufferedSource);
+
+        }
+        if (gpRecords == null) {
+            throw new RuntimeException("No valid records found in " + catalogueFileName);
+        }
+        System.out.println(gpRecords.size());
+
+
+        // Initialise orekit
         initialiseOrekit();
 
-        // Initialise TLE propagator
-        String tleLine1 = "1 25544U 98067A   19083.21651620  .00002291  00000-0  44330-4 0  9996";
-        String tleLine2 = "2 25544  51.6443  63.6267 0002459 113.3867  73.3736 15.52425742162054";
-        final TLE satTLE = new TLE(tleLine1, tleLine2);
-        final TLEPropagator propagator = TLEPropagator.selectExtrapolator(satTLE);
-        AbsoluteDate initialDate = satTLE.getDate();
+        // Loop over all GP records
+        for (final GPRecord gpRecord : gpRecords) {
 
-        SpacecraftState spacecraftState = propagator.propagate(initialDate);
-        System.out.println(spacecraftState.getFrame());
-        System.out.println(spacecraftState.getPVCoordinates());
+            // Values same for each object
+            char classification = 'U';
+            int launchYear = 0;
+            int launchNumber = 1;
+            String launchPiece = "A";
+            int ephemerisType = 0;
+            int elementNumber = 1;
+            int revNumber = 1;
+
+            // Transform elements to units used by orekit
+            AbsoluteDate epoch = new AbsoluteDate(gpRecord.getEpoch(), TimeScalesFactory.getUTC());
+            // GP data is in revs/day -> rad/s
+            double meanMotion = gpRecord.getMeanMotion() * 2.0 * Math.PI / (24.0 * 60.0 * 60.0);
+            // GP is revs/day**2 / 2 -> rad/s**2
+            double meanMotionDot = gpRecord.getMeanMotionDot() * 2.0 * Math.PI / Math.pow(24.0 * 60.0 * 60.0, 2.0) * 2.0;
+            // GP is revs/day**3 / 6 -> rad/s**3
+            double meanMotionDDot = gpRecord.getMeanMotionDDot() * 2.0 * Math.PI / Math.pow(24.0 * 60.0 * 60.0, 3.0) * 6.0;
+            double eccentricity = gpRecord.getEccentricity();
+            double inclination = Math.toRadians(gpRecord.getInclination());
+            double argOfPericenter = Math.toRadians(gpRecord.getArgOfPericenter());
+            double raOfAscNode = Math.toRadians(gpRecord.getRaOfAscNode());
+            double meanAnomaly = Math.toRadians(gpRecord.getMeanAnomaly());
+            double bstar = gpRecord.getBstar();
+
+            final TLE satTLE = new TLE(gpRecord.getNoradID(), classification, launchYear, launchNumber, launchPiece,
+                    ephemerisType, elementNumber, epoch, meanMotion, meanMotionDot, meanMotionDDot, eccentricity,
+                    inclination, argOfPericenter, raOfAscNode, meanAnomaly, revNumber, bstar);
+            final TLEPropagator tlePropagator = TLEPropagator.selectExtrapolator(satTLE);
+
+            SpacecraftState spacecraftState = tlePropagator.propagate(epoch);
+            System.out.println(spacecraftState.getPVCoordinates());
+
+        }
 
     }
 }
