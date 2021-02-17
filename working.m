@@ -56,3 +56,6 @@ ylabel('Position Error (m)')
 xlabel('Semi-Major Axis (km)')
 legend('orekit', 'Vallado')
 
+%% Save figures
+saveas(1,'figures/rel_error.png')
+saveas(2,'figures/abs_error.png')
