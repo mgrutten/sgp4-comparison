@@ -30,7 +30,7 @@ public class SGP4Test {
     /**
      * Number of points evaluated per orbital period
      */
-    private static final int PTS_PER_PERIOD = 11;
+    private static final int PTS_PER_PERIOD = 10;
 
     /**
      * Initialise orekit time transformations, using data in the "orekit-data-master" directory

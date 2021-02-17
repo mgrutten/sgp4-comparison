@@ -5,75 +5,34 @@
 #include <sstream>
 #include <stdexcept>
 
+// #include "MathTimeLib.h"
+#include "SGP4.h"
 #include "json.hpp"
-
-// Library headers
-namespace afspc {
-extern "C" {
-#include "AstroFunc.h"
-#include "DllMain.h"
-#include "EnvConst.h"
-#include "Sgp4Prop.h"
-#include "TimeFunc.h"
-#include "Tle.h"
-}
-}  // namespace afspc
 
 // Rename the nlohmann namespace
 namespace json = nlohmann;
 
-// Length of messages from AFSPC libraries
-static const u_int16_t LOGMSGLEN = 128;
-
 // Number of points evaluated per orbital period
 static const u_int32_t PTS_PER_PERIOD = 10;
 
-// Use TLE (true) or individual GP elements (false)
-static const bool USE_TLE = false;
+// Julian Epoch for 1950 (used by AFSPC)
+static const double JD50_EPOCH = 2433281.5;
 
-// Extract and show an error message to stdout
-void ShowErrMsg() {
-    char errMsg[LOGMSGLEN];
+// Convert date/time components into a Julian day.
+// This is extracted from Vallado's MathTimeLib.
+void jday(int year, int mon, int day, int hr, int minute, double sec,
+          double& jd, double& jdFrac) {
+    jd = 367.0 * year -
+         std::floor((7 * (year + std::floor((mon + 9) / 12.0))) * 0.25) +
+         std::floor(275 * mon / 9.0) + day + 1721013.5;
+    jdFrac = (sec + minute * 60.0 + hr * 3600.0) / 86400.0;
 
-    afspc::GetLastErrMsg(errMsg);
-    errMsg[LOGMSGLEN - 1] = 0;
-    // printf("%s\n", errMsg);
-
-    std::cerr << errMsg << std::endl;
-}
-
-// Extract an error message and throw an exception
-void ThrowErrMsg() {
-    char errMsg[LOGMSGLEN];
-
-    afspc::GetLastErrMsg(errMsg);
-    errMsg[LOGMSGLEN - 1] = 0;
-    // printf("%s\n", errMsg);
-
-    throw std::runtime_error(errMsg);
-}
-
-// Initialise the AFSPC libraries
-void InitialiseLibs() {
-    uint64_t apPtr;
-
-    // Inialise Main library
-    apPtr = afspc::DllMainInit();
-
-    // Initialise Env library
-    if (afspc::EnvInit(apPtr) != 0) ThrowErrMsg();
-
-    // Initialise TimeFunc library
-    if (afspc::TimeFuncInit(apPtr) != 0) ThrowErrMsg();
-
-    // Initialise AstroFunc library
-    if (afspc::AstroFuncInit(apPtr) != 0) ThrowErrMsg();
-
-    // Initialise Tle library
-    if (afspc::TleInit(apPtr) != 0) ThrowErrMsg();
-
-    // Initialise Sgp4Prop library
-    if (afspc::Sgp4Init(apPtr) != 0) ThrowErrMsg();
+    // check that the day and fractional day are correct
+    if (std::abs(jdFrac) >= 1.0) {
+        double dtt = std::floor(jdFrac);
+        jd = jd + dtt;
+        jdFrac = jdFrac - dtt;
+    }
 }
 
 // A container for a catalogue entry.  Just keep the parts of an entry that we
@@ -130,53 +89,44 @@ void from_json(const json::json& j, catalogueEntry& e) {
 //     file: output file
 // numSteps: number of propagation steps to make
 void PropagateAndWrite(std::ostream& file, const int numSteps,
-                       const catalogueEntry& entry, const bool fromTLE) {
-    // Load the TLE
-    int64_t satkey;
-    if (fromTLE) {
-        // Initialise TLE
-        satkey =
-            afspc::TleAddSatFrLines(const_cast<char*>(entry.line1.c_str()),
-                                    const_cast<char*>(entry.line2.c_str()));
+                       const catalogueEntry& entry) {
+    // Same for every sat
+    char opsmode = 'i';
+    const gravconsttype whichconst = wgs72;
+    char sat_num[] = "xxxxx";
 
-    } else {
-        // Same for every sat
-        char classification = 'x';
-        char sat_name[] = "xxxxxxxx";
-        int ephemeris_type = 0;
-        int elset_num = 1;
-        int rev_num = 1;
+    // Extract date components of epoch
+    int year = std::stoi(entry.epoch.substr(0, 4));
+    int month = std::stoi(entry.epoch.substr(5, 2));
+    int day = std::stoi(entry.epoch.substr(8, 2));
+    int hour = std::stoi(entry.epoch.substr(11, 2));
+    int minute = std::stoi(entry.epoch.substr(14, 2));
+    double secs = std::stod(entry.epoch.substr(17, 9));
 
-        // Extract date components of epoch
-        int year = std::stoi(entry.epoch.substr(0, 4));
-        int month = std::stoi(entry.epoch.substr(5, 2));
-        int day = std::stoi(entry.epoch.substr(8, 2));
-        int hour = std::stoi(entry.epoch.substr(11, 2));
-        int minute = std::stoi(entry.epoch.substr(14, 2));
-        double secs = std::stod(entry.epoch.substr(17, 9));
+    // Year/date components
+    double epoch_jd1, epoch_jd2;
+    jday(year, month, day, hour, minute, secs, epoch_jd1, epoch_jd2);
+    double jd50 = (epoch_jd1 - JD50_EPOCH) + epoch_jd2;
 
-        // Epoch in AFSPC format
-        double ds50UTC =
-            afspc::TimeComps2ToUTC(year, month, day, hour, minute, secs);
+    // Initialise propagator
+    elsetrec satrec;
+    double mean_motion_dot =
+        entry.mean_motion_dot * 2.0 * M_PI / (24.0 * 60.0) / (24.0 * 60.0);
+    double mean_motion_ddot = entry.mean_motion_ddot * 2.0 * M_PI /
+                              (24.0 * 60.0) / (24.0 * 60.0) / (24.0 * 60.0);
+    double arg_perigee = entry.arg_of_pericenter * M_PI / 180.0;
+    double inclination = entry.inclination * M_PI / 180.0;
+    double mean_anomaly = entry.mean_anomaly * M_PI / 180.0;
+    double mean_motion = entry.mean_motion * 2.0 * M_PI / (24.0 * 60.0);
+    double raan = entry.ra_of_asc_node * M_PI / 180.0;
 
-        // Year/date components
-        int epoch_yr;
-        double epoch_days;
-        afspc::UTCToYrDays(ds50UTC, &epoch_yr, &epoch_days);
-
-        // Initialse TLE entry
-        satkey = afspc::TleAddSatFrFieldsGP2(
-            entry.norad_cat_id, classification, sat_name, epoch_yr, epoch_days,
-            entry.bstar, ephemeris_type, elset_num, entry.inclination,
-            entry.ra_of_asc_node, entry.eccentricity, entry.arg_of_pericenter,
-            entry.mean_anomaly, entry.mean_motion, rev_num,
-            entry.mean_motion_dot, entry.mean_motion_ddot);
-    }
-    if (satkey <= 0) ThrowErrMsg();
-
-    // Initialize the loaded TLE before it can be propagated (see Sgp4Prop dll
-    // document) This is important!!!
-    if (afspc::Sgp4InitSat(satkey) != 0) ThrowErrMsg();
+    SGP4Funcs::sgp4init(whichconst, opsmode, sat_num, jd50, entry.bstar,
+                        mean_motion_dot, mean_motion_ddot, entry.eccentricity,
+                        arg_perigee, inclination, mean_anomaly, mean_motion,
+                        raan, satrec);
+    if (satrec.error)
+        throw std::runtime_error("sgp4init: SGP4 error number " +
+                                 std::to_string(satrec.error));
 
     // Write the NORAD ID
     // std::cout << entry.norad_cat_id << std::endl;
@@ -187,18 +137,9 @@ void PropagateAndWrite(std::ostream& file, const int numSteps,
     for (int k = 0; k <= numSteps; ++k) {
         // SGP4 propagation using minutes since epoch
         double sse = double(k) * entry.period / double(numSteps);
-        double ds50UTC;
-        double llh[3];
         double pos[3];
         double vel[3];
-        if (afspc::Sgp4PropMse(satkey, sse / 60.0, &ds50UTC, pos, vel, llh) !=
-            0) {
-            ShowErrMsg();
-            for (int i = 0; i < 3; ++i) {
-                pos[i] = NAN;
-                vel[i] = NAN;
-            }
-        }
+        SGP4Funcs::sgp4(satrec, sse / 60.0, pos, vel);
 
         // Write time since epoch
         // std::cout << "  " << mse;
@@ -221,18 +162,9 @@ void PropagateAndWrite(std::ostream& file, const int numSteps,
         file.write(reinterpret_cast<const char*>(vel), 3 * sizeof(double));
         // std::cout << std::endl;
     }
-
-    // Remove initialized TLE from memory
-    if (afspc::Sgp4RemoveSat(satkey) != 0) ThrowErrMsg();
-
-    // Remove loaded TLE from memory
-    if (afspc::TleRemoveSat(satkey) != 0) ThrowErrMsg();
 }
 
 int main() {
-    // Initialise AFSPC libraries
-    InitialiseLibs();
-
     // Set numerical precision of display
     std::cout.precision(std::numeric_limits<double>::max_digits10 - 2);
 
@@ -256,7 +188,7 @@ int main() {
 
         // Loop over each entry, propagating the TLE
         for (const catalogueEntry entry : testData) {
-            PropagateAndWrite(outputFile, PTS_PER_PERIOD, entry, USE_TLE);
+            PropagateAndWrite(outputFile, PTS_PER_PERIOD, entry);
         }
     } else {
         throw std::runtime_error("Cannot open file for writing.");
